@@ -11,14 +11,17 @@
 #include <GL/glm/ext.hpp>
 #include <GL/glm/gtc/matrix_transform.hpp>
 
+constexpr auto M_PI = 3.14159265358979323846;
+
 char* filetobuf(const char* file);	// 파일 읽기 함수
 GLuint initshader();				// 쉐이더 프로그램 만드는 함수
 GLint shaderProgramID;				// 쉐이더 프로그램
 
 void MakeBuffer();					// 버퍼 만드는 함수
-GLuint GameMap_VAO[2];				// VAO 버퍼
-GLuint GameMap_VBO[4];				// VBO 버퍼
-GLuint GameMap_EBO[2];				// EBO 버퍼
+GLuint GameMap_VAO[3];				// VAO 버퍼
+GLuint GameMap_VBO[6];				// VBO 버퍼
+GLuint GameMap_EBO[3];				// EBO 버퍼
+GLUquadricObj* qobj;
 
 GLvoid drawScene(GLvoid);			// 그리기 함수
 GLvoid Reshape(int w, int h);		// 다시 그리기 함수
@@ -28,13 +31,29 @@ double NDC_y_Change(double y);		// 정수 좌표 정규화 시키는 함수
 
 void Keyboard(unsigned char key, int x, int y);		// 키보드 명령어 받는 함수
 void SpecialKeyboard(int key, int x, int y);		// 특수 키보드 명령어 받는 함수
+void Timerfunction(int value);						// 타이머
 
-int change = 1;
-float camera_x = 0.0;
-float camera_y = 10.0;
-float camera_z = 10.0;
+double camera_value = 5.0;
+double camera_x_transfer = 0.0;
+double camera_y_transfer = camera_value;
+double camera_z_transfer = camera_value;
 
-GLfloat GameMap[] = {
+double camera_x_change = camera_x_transfer;
+double camera_y_change = camera_y_transfer;
+double camera_z_change = camera_z_transfer;
+
+
+double character_x_transfer = 0.0;
+double character_y_transfer = 0.0;
+double character_z_transfer = 0.0;
+
+double character_x_pivot = 0.0;
+double character_y_pivot = 0.75;
+double character_z_pivot = 0.0;
+
+int e_check = 0;
+
+GLfloat Square[] = {
 	/////////////////////////// 육면체 정점 8 개
 	0.5f,  0.5f, 0.5f,  
 	0.5f, -0.5f, 0.5f, 
@@ -58,7 +77,7 @@ GLfloat GameMap[] = {
 	-0.5f,  0.5f, -0.5f,   
 	0.5f,  0.5f, -0.5f,  
 };
-unsigned int GameMap_Index[] = {
+unsigned int Square_Index[] = {
 	/////////////////////////////// 게임 맵 ebo 만들기 위한 인덱스
 	0, 3, 1,
 	1, 3, 2,
@@ -74,7 +93,7 @@ unsigned int GameMap_Index[] = {
 	2, 6, 5
 };
 
-GLfloat GameMap_Tile_Colors[] = {
+GLfloat Square_Tile_Colors[] = {
 	/////////////////////////////////// 게임 맵 타일 컬러 흰색
 	1.0f, 1.0f, 1.0f,
 	1.0f, 1.0f, 1.0f,
@@ -86,7 +105,20 @@ GLfloat GameMap_Tile_Colors[] = {
 	1.0f, 1.0f, 1.0f
 };
 
-GLfloat GameMap_Edge_Colors[] = {
+GLfloat Character_Colors[] = {
+	/////////////////////////////////// 캐릭터 컬러 파란색
+
+	0.0f, 0.0f, 1.0f,
+	0.0f, 0.0f, 1.0f,
+	0.0f, 0.0f, 1.0f,
+	0.0f, 0.0f, 1.0f,
+	0.0f, 0.0f, 1.0f,
+	0.0f, 0.0f, 1.0f,
+	0.0f, 0.0f, 1.0f,
+	0.0f, 0.0f, 1.0f
+};
+
+GLfloat Square_Edge_Colors[] = {
 	/////////////////////////////////// 게임 맵 테두리 컬러 붉은색
 
 	1.0f, 0.0f, 0.0f,
@@ -106,6 +138,8 @@ GLfloat GameMap_Edge_Colors[] = {
 	1.0f, 0.0f, 0.0f,
 	1.0f, 0.0f, 0.0f
 };
+
+
 
 int main(int argc, char** argv)
 {
@@ -128,16 +162,19 @@ int main(int argc, char** argv)
 		std::cout << "GLEW Initialized\n";
 
 	glEnable(GL_DEPTH_TEST);						// 깊이 검사
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	shaderProgramID = initshader();					// 쉐이더 프로그램 생성				
-	glGenVertexArrays(2, GameMap_VAO);				// VAO 생성
-	glGenBuffers(4, GameMap_VBO);					// VBO 생성
-	glGenBuffers(2, GameMap_EBO);					// EBO 생성
+	glGenVertexArrays(3, GameMap_VAO);				// VAO 생성
+	glGenBuffers(6, GameMap_VBO);					// VBO 생성
+	glGenBuffers(3, GameMap_EBO);					// EBO 생성
+
+	qobj = gluNewQuadric();							// 구 생성
 
 	glutDisplayFunc(drawScene);						// 그리기 함수
 
 	glutKeyboardFunc(Keyboard);						// 키보드 입력
 	glutSpecialFunc(SpecialKeyboard);				// 스페셜 키보드 입력
-
+	glutTimerFunc(0, Timerfunction, 1);				// 타이머
 
 	glutReshapeFunc(Reshape);						// 다시 그리기 함수
 	glutMainLoop();
@@ -151,10 +188,9 @@ GLvoid drawScene() // 콜백 함수: 출력
 	MakeBuffer();										// 버퍼 생성
 	glUseProgram(shaderProgramID);						// 쉐이더 프로그램 사용
 
-
 	/////////////////////// 뷰잉 변환 ////////////////////// 전체 적용
-	glm::vec3 cameraPos = glm::vec3(camera_x, camera_y, camera_z);
-	glm::vec3 cameraDirection = glm::vec3(camera_x, camera_y - 10.0f, camera_z - 10.0f);
+	glm::vec3 cameraPos = glm::vec3(camera_x_transfer + character_x_pivot, camera_y_transfer, camera_z_transfer + character_z_pivot);
+	glm::vec3 cameraDirection = glm::vec3(character_x_pivot, character_y_pivot, character_z_pivot);
 	glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
 	glm::mat4 view = glm::mat4(1.0f);
 	view = glm::lookAt(cameraPos, cameraDirection, cameraUp);
@@ -170,33 +206,25 @@ GLvoid drawScene() // 콜백 함수: 출력
 
 	/////////////////////// 게임 맵 타일 생성 ///////////////////////////
 
-	/////////////////////// 월드 변환 //////////////////////
+	glm::mat4 GameMap_change = glm::mat4(1.0f);					// 게임맵 변환
+	glm::mat4 Character_change = glm::mat4(1.0f);				// 캐릭터 변환
+	unsigned int modelLocation = glGetUniformLocation(shaderProgramID, "modelTransform");
 
-	glm::mat4 translate_GameMap_x = glm::mat4(1.0f);		// x 좌표 초기화
-	glm::mat4 translate_GameMap_y = glm::mat4(1.0f);		// y 좌표 초기화
-	glm::mat4 GameMap_change = glm::mat4(1.0f);				// 최종 변환 초기화
 
-	for (int i = -5.0f; i < 5.0f; i+=1.0f) {
-		for (int j = -5.0f; j < 5.0f; j += 1.0f) {
-			translate_GameMap_x = glm::mat4(1.0f);			// x 좌표 초기화 
-			translate_GameMap_y = glm::mat4(1.0f);			// y 좌표 초기화
+	for (double i = 0.0; i < 10.0; i += 1.0) 
+	{
+		GameMap_change = glm::mat4(1.0f);														// 초기화 
+		GameMap_change = glm::translate(GameMap_change, glm::vec3(-4.5 + i * 1.0f, 0.0, -5.5));	// x 좌표 변경
 
-			translate_GameMap_x = glm::translate(translate_GameMap_x,	// x 좌표 변경
-				glm::vec3(i * 1.0f, 0.0, 0.0));
-			translate_GameMap_x = glm::translate(translate_GameMap_x,	// y 좌표 변경
-				glm::vec3(0.0, 0.0, j * 1.0f));
-
-			GameMap_change = translate_GameMap_x * translate_GameMap_y;	// 변화 종합
-
-			// 쉐이더로 보내기 //
-			unsigned int modelLocation = glGetUniformLocation(shaderProgramID, "modelTransform");
-			glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(GameMap_change));
+		for (double j = 0.0; j < 10.0; j += 1.0) 
+		{
+			GameMap_change = glm::translate(GameMap_change, glm::vec3(0.0, 0.0, 1.0));			// y 좌표 변경
+			glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(GameMap_change));		// 쉐이더로 보내기 //
 
 			///////////////게임 맵 타일////////////////////
 
 			glBindVertexArray(GameMap_VAO[0]);
 
-			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 			glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
 
 			////////////////////게임 맵 테두리///////////
@@ -209,29 +237,170 @@ GLvoid drawScene() // 콜백 함수: 출력
 			glDrawArrays(GL_LINE_LOOP, 8, 4);
 			glDrawArrays(GL_LINE_LOOP, 12, 4);
 		}
-		
 	}
+
+	////////////////////// 메인 캐릭터 공 //////////////////
+	glBindVertexArray(GameMap_VAO[2]);
+	//Character_change = glm::rotate(Character_change, glm::radians(90.0f), glm::vec3(0.0, 1.0, 0.0));
+	Character_change = glm::translate(Character_change, glm::vec3(character_x_pivot, character_y_pivot, character_z_pivot));
+	Character_change = glm::scale(Character_change, glm::vec3(0.5, 0.5, 0.5));
+	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(Character_change));
+	glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
 
 	glutSwapBuffers();
 }
 
+void Timerfunction(int value) {
+	if (e_check == 0 && camera_x_transfer != 0.0) 
+	{
+		camera_x_transfer += camera_x_change;
+		camera_z_transfer += camera_z_change;
+	}
+	if (e_check == 1 && camera_x_transfer != camera_value)
+	{
+		camera_x_transfer += camera_x_change;
+		camera_z_transfer += camera_z_change;
+	}
+	if (e_check == 2 && camera_x_transfer != 0.0)
+	{
+		camera_x_transfer += camera_x_change;
+		camera_z_transfer += camera_z_change;
+	}
+	if (e_check == 3 && camera_x_transfer != -camera_value)
+	{
+		camera_x_transfer += camera_x_change;
+		camera_z_transfer += camera_z_change;
+	}
+
+	if (e_check == 0 || e_check == 2)
+	{
+		if (character_x_pivot < character_x_transfer)
+			character_x_pivot += 0.5;
+		if (character_x_pivot > character_x_transfer)
+			character_x_pivot -= 0.5;
+	}
+	if (e_check == 1 || e_check == 3)
+	{
+		if (character_z_pivot < character_z_transfer)
+			character_z_pivot += 0.5;
+		if (character_z_pivot > character_z_transfer)
+			character_z_pivot -= 0.5;
+	}
+	
+
+	glutPostRedisplay();
+	glutTimerFunc(100, Timerfunction, 1);
+}
 
 void Keyboard(unsigned char key, int x, int y) {
 	switch (key) {
-	case 'q':
-	case 'Q':
+	case 'p':
+	case 'P':
 		exit(0);
 		break;
 
 	case 'z':
 	case 'Z':
-		camera_y += 1.0f;
+		camera_y_transfer += 1.0f;
 		glutPostRedisplay();
 		break;
 
 	case 'x':
 	case 'X':
-		camera_y -= 1.0f;
+		camera_y_transfer -= 1.0f;
+		glutPostRedisplay();
+		break;
+
+	case 'e':
+	case 'E':
+		if (e_check == 0 && camera_x_transfer == 0.0 && camera_z_transfer == camera_value)
+		{
+			e_check = 1;
+			camera_x_change = 0.5;
+			camera_z_change = -0.5;
+
+		}
+
+		if (e_check == 1 && camera_x_transfer == camera_value && camera_z_transfer == 0.0)
+		{
+			e_check = 2;
+			camera_x_change = -0.5;
+			camera_z_change = -0.5;
+		}
+
+		if (e_check == 2 && camera_x_transfer == 0.0 && camera_z_transfer == -camera_value)
+		{
+			e_check = 3;
+			camera_x_change = -0.5;
+			camera_z_change = 0.5;
+		}
+
+		if (e_check == 3 && camera_x_transfer == -camera_value && camera_z_transfer == 0.0)
+		{
+			e_check = 0;
+			camera_x_change = 0.5;
+			camera_z_change = 0.5;
+		}
+
+		glutPostRedisplay();
+		break;
+
+	case 'q':
+	case 'Q':
+		if (e_check == 0 && camera_x_transfer == 0.0 && camera_z_transfer == camera_value)
+		{
+			e_check = 3;
+			camera_x_change = -0.5;
+			camera_z_change = -0.5;
+
+		}
+
+		if (e_check == 3 && camera_x_transfer == -camera_value && camera_z_transfer == 0.0)
+		{
+			e_check = 2;
+			camera_x_change = 0.5;
+			camera_z_change = -0.5;
+		}
+
+		if (e_check == 2 && camera_x_transfer == 0.0 && camera_z_transfer == -camera_value)
+		{
+			e_check = 1;
+			camera_x_change = 0.5;
+			camera_z_change = 0.5;
+		}
+
+		if (e_check == 1 && camera_x_transfer == camera_value && camera_z_transfer == 0.0)
+		{
+			e_check = 0;
+			camera_x_change = -0.5;
+			camera_z_change = 0.5;
+		}
+		glutPostRedisplay();
+		break;
+
+	case 'a':
+	case 'A':
+		if(e_check == 0)
+			character_x_transfer -= 1.0;
+		if (e_check == 1)
+			character_z_transfer += 1.0;
+		if (e_check == 2)
+			character_x_transfer += 1.0;
+		if (e_check == 3)
+			character_z_transfer -= 1.0;
+		glutPostRedisplay();
+		break;
+
+	case 'd':
+	case 'D':
+		if (e_check == 0)
+			character_x_transfer += 1.0;
+		if (e_check == 1)
+			character_z_transfer -= 1.0;
+		if (e_check == 2)
+			character_x_transfer -= 1.0;
+		if (e_check == 3)
+			character_z_transfer += 1.0;
 		glutPostRedisplay();
 		break;
 	}
@@ -240,19 +409,19 @@ void Keyboard(unsigned char key, int x, int y) {
 void SpecialKeyboard(int key, int x, int y) {
 	switch (key) {
 	case GLUT_KEY_UP:
-		camera_z -= 1.0f;;
+		camera_z_transfer -= 1.0f;;
 		glutPostRedisplay();
 		break;
 	case GLUT_KEY_DOWN:
-		camera_z += 1.0f;
+		camera_z_transfer += 1.0f;
 		glutPostRedisplay();
 		break;
 	case GLUT_KEY_RIGHT:
-		camera_x += 1.0f;
+		camera_x_transfer += 1.0f;
 		glutPostRedisplay();
 		break;
 	case GLUT_KEY_LEFT:
-		camera_x -= 1.0f;
+		camera_x_transfer -= 1.0f;
 		glutPostRedisplay();
 		break;
 	}
@@ -264,18 +433,18 @@ void MakeBuffer()
 
 	glBindVertexArray(GameMap_VAO[0]);
 	glBindBuffer(GL_ARRAY_BUFFER, GameMap_VBO[0]);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GameMap), GameMap, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(Square), Square, GL_STATIC_DRAW);
 
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GameMap_EBO[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GameMap_Index), GameMap_Index, GL_STATIC_DRAW);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(Square_Index), Square_Index, GL_STATIC_DRAW);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
 	glEnableVertexAttribArray(0);
 
 	glBindBuffer(GL_ARRAY_BUFFER, GameMap_VBO[1]);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GameMap_Tile_Colors), GameMap_Tile_Colors, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(Square_Tile_Colors), Square_Tile_Colors, GL_STATIC_DRAW);
 
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GameMap_EBO[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GameMap_Index), GameMap_Index, GL_STATIC_DRAW);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(Square_Index), Square_Index, GL_STATIC_DRAW);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
 	glEnableVertexAttribArray(1);
 
@@ -284,12 +453,31 @@ void MakeBuffer()
 
 	glBindVertexArray(GameMap_VAO[1]);
 	glBindBuffer(GL_ARRAY_BUFFER, GameMap_VBO[2]);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GameMap), GameMap, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(Square), Square, GL_STATIC_DRAW);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
 	glEnableVertexAttribArray(0);
 
 	glBindBuffer(GL_ARRAY_BUFFER, GameMap_VBO[3]);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GameMap_Edge_Colors), GameMap_Edge_Colors, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(Square_Edge_Colors), Square_Edge_Colors, GL_STATIC_DRAW);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
+	glEnableVertexAttribArray(1);
+
+	/////////////////캐릭터///////////////
+
+	glBindVertexArray(GameMap_VAO[2]);
+	glBindBuffer(GL_ARRAY_BUFFER, GameMap_VBO[4]);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(Square), Square, GL_STATIC_DRAW);
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GameMap_EBO[1]);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(Square_Index), Square_Index, GL_STATIC_DRAW);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
+	glEnableVertexAttribArray(0);
+
+	glBindBuffer(GL_ARRAY_BUFFER, GameMap_VBO[5]);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(Character_Colors), Character_Colors, GL_STATIC_DRAW);
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GameMap_EBO[2]);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(Square_Index), Square_Index, GL_STATIC_DRAW);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
 	glEnableVertexAttribArray(1);
 
@@ -302,7 +490,7 @@ GLvoid Reshape(int w, int h)
 	glViewport(0, 0, w, h);
 }
 
-///////////////////////////// 정규화 시키기 함수
+///////////////////////////// 정규화 시키는 함수
 
 double NDC_x_Change(double x) {
 	return (x * 2) / 800 - 1.0;
